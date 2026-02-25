@@ -42,6 +42,10 @@ import sys
 import time
 from datetime import datetime, timedelta
 
+# Directory that contains this script — used to anchor output paths so
+# recordings end up next to the script regardless of the working directory.
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
 
 # ---------------------------------------------------------------------------
 # ffmpeg command builder
@@ -274,7 +278,7 @@ def main() -> None:
     )
     p.add_argument(
         "--out",
-        default="./recordings",
+        default=os.path.join(SCRIPT_DIR, "data_recordings"),
         metavar="DIR",
         help="Directory where MKV segment files will be written.",
     )
@@ -330,7 +334,7 @@ def main() -> None:
     )
     p.add_argument(
         "--log",
-        default="./ffmpeg_recorder.log",
+        default=os.path.join(SCRIPT_DIR, "ffmpeg_recorder.log"),
         metavar="FILE",
         help=(
             "Path to the log file where ffmpeg's stdout/stderr output is "

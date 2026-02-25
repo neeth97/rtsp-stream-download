@@ -107,19 +107,20 @@ git clone <your-repo-url>
 cd <repo-directory>
 ```
 
-### 5 — Create the output directory
+### 5 — Output directory
 
-The script creates this automatically, but you can pre-create it and set
-permissions explicitly:
+The script automatically creates a `data_recordings/` folder **next to the
+script file** the first time it runs — no manual setup required.
+
+If you want to pre-create it or adjust permissions explicitly:
 
 ```bash
-sudo mkdir -p /data/recordings
-sudo chown $USER:$USER /data/recordings
+mkdir -p data_recordings
 ```
 
 > Make sure the filesystem has enough free space.  A typical 1080p H.264 stream
 > uses roughly **0.5 – 2 GB per hour** depending on bitrate and scene activity.
-> Check free space with `df -h /data/recordings`.
+> Check free space with `df -h data_recordings`.
 
 ### 6 — Run the recorder (foreground / test)
 
@@ -128,7 +129,6 @@ Use this for an initial test.  Press **Ctrl+C** to stop.
 ```bash
 python3 rtsp_to_mkv_segments.py \
     --rtsp "rtsp://admin:password@192.168.1.10:554/stream1" \
-    --out  /data/recordings \
     --segment 600 \
     --tcp
 ```
@@ -137,7 +137,7 @@ You should see output similar to:
 
 ```
 [recorder] ──────────────────────────────────────────────────
-[recorder] Output directory  : /data/recordings
+[recorder] Output directory  : /home/ubuntu/data_recordings
 [recorder] Log file          : /home/ubuntu/ffmpeg_recorder.log
 [recorder] Segment length    : 600 s  (0:10:00)
 [recorder] Max duration      : 14400 s  (stops around 2025-06-01 12:00:00)
@@ -149,7 +149,7 @@ You should see output similar to:
 [recorder] Launching ffmpeg (launch #0) …
 ```
 
-After 10 minutes the first MKV segment appears in `/data/recordings/`.
+After 10 minutes the first MKV segment appears in `data_recordings/`.
 
 ---
 
@@ -158,13 +158,13 @@ After 10 minutes the first MKV segment appears in `/data/recordings/`.
 | Argument | Default | Description |
 |----------|---------|-------------|
 | `--rtsp URL` | *(required)* | Full RTSP URL, e.g. `rtsp://user:pass@ip:554/stream` |
-| `--out DIR` | `./recordings` | Output directory for MKV files |
+| `--out DIR` | `<script-dir>/data_recordings` | Output directory for MKV files |
 | `--segment N` | `600` | Segment length in seconds (600 = 10 min) |
 | `--tcp` | off | Force RTSP over TCP (recommended for NAT / VPN) |
 | `--restart-delay N` | `5` | Seconds to wait before restarting ffmpeg after a crash |
 | `--max-restarts N` | `0` | Stop after N restarts; 0 = retry forever |
 | `--max-duration N` | `14400` | Stop after N total seconds (0 = no limit) |
-| `--log FILE` | `./ffmpeg_recorder.log` | Log file path (appended, parent dir created automatically) |
+| `--log FILE` | `<script-dir>/ffmpeg_recorder.log` | Log file path (appended, parent dir created automatically) |
 | `--extra-ffmpeg-args ARGS` | *(empty)* | Extra ffmpeg output options, e.g. `"-an"` to strip audio |
 
 ### Common `--max-duration` values
@@ -186,14 +186,16 @@ To keep the recorder running after you log out of an SSH session:
 ```bash
 nohup python3 /home/ubuntu/rtsp_to_mkv_segments.py \
     --rtsp "rtsp://admin:password@192.168.1.10:554/stream1" \
-    --out  /data/recordings \
     --segment 600 \
     --tcp \
-    --log /data/recordings/recorder.log \
     > /dev/null 2>&1 &
 
 echo "PID: $!"
 ```
+
+Recordings and the log are written to `/home/ubuntu/data_recordings/` and
+`/home/ubuntu/ffmpeg_recorder.log` automatically (next to the script).
+Pass `--out` and `--log` to override these paths.
 
 Stop it later with:
 
@@ -232,11 +234,9 @@ WorkingDirectory=/home/<YOUR_USER>
 
 ExecStart=/usr/bin/python3 /home/<YOUR_USER>/rtsp_to_mkv_segments.py \
     --rtsp "rtsp://admin:password@192.168.1.10:554/stream1" \
-    --out  /data/recordings \
     --segment 600 \
     --tcp \
-    --max-duration 0 \
-    --log /data/recordings/recorder.log
+    --max-duration 0
 
 # Restart the Python wrapper if it exits unexpectedly.
 # (The wrapper already handles ffmpeg restarts internally.)
@@ -274,7 +274,7 @@ sudo systemctl status rtsp-recorder
 
 ```bash
 # Live tail of the recorder log file
-tail -f /data/recordings/recorder.log
+tail -f /home/<YOUR_USER>/ffmpeg_recorder.log
 
 # Or via journalctl (systemd's journal)
 journalctl -u rtsp-recorder -f
@@ -294,20 +294,20 @@ sudo systemctl restart rtsp-recorder
 List segments sorted by time (newest last):
 
 ```bash
-ls -lhtr /data/recordings/*.mkv
+ls -lhtr data_recordings/*.mkv
 ```
 
 Play a segment with ffplay (part of the ffmpeg package):
 
 ```bash
-ffplay /data/recordings/anpr_2025-06-01_08-00-00.mkv
+ffplay data_recordings/anpr_2025-06-01_08-00-00.mkv
 ```
 
 Inspect a segment without playing it:
 
 ```bash
 ffprobe -v quiet -print_format json -show_format -show_streams \
-    /data/recordings/anpr_2025-06-01_08-00-00.mkv
+    data_recordings/anpr_2025-06-01_08-00-00.mkv
 ```
 
 ---
@@ -326,7 +326,7 @@ crontab -e
 Add:
 
 ```cron
-0 * * * * find /data/recordings -name "*.mkv" -mtime +7 -delete
+0 * * * * find /path/to/rtsp-stream-download/data_recordings -name "*.mkv" -mtime +7 -delete
 ```
 
 ---
@@ -353,7 +353,7 @@ sudo apt-get install -y ffmpeg
 Check the log file for the error:
 
 ```bash
-tail -50 /data/recordings/recorder.log
+tail -50 ffmpeg_recorder.log
 ```
 
 Common causes:
@@ -367,7 +367,7 @@ Common causes:
   elementary stream.
 - Increase `--restart-delay` to give the camera time to fully reboot before
   reconnecting.
-- Check that the disk is not full: `df -h /data/recordings`.
+- Check that the disk is not full: `df -h data_recordings`.
 
 ### High CPU usage
 
@@ -394,7 +394,7 @@ sudo timedatectl set-ntp true
 ## Security notes
 
 - **RTSP credentials appear in the process list** (`ps aux`) and in the log
-  file.  Restrict log file permissions: `chmod 600 /data/recordings/recorder.log`.
+  file.  Restrict log file permissions: `chmod 600 ffmpeg_recorder.log`.
 - If the RTSP URL contains special characters in the password, URL-encode them
   or wrap the argument in single quotes to prevent shell interpretation.
 - Run the recorder as a dedicated low-privilege user rather than root.
