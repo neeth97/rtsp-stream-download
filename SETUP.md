@@ -42,66 +42,74 @@ Must be 3.9 or later. No additional packages are required — the script uses on
 
 ---
 
-## 4. Run the recorder
+## 4. Configure camera URLs
 
-Recordings are saved automatically to `data_recordings/` in the same directory as the script.
+Open `run_recorder.sh` and set the RTSP credentials for each camera:
 
 ```bash
-python3 rtsp_to_mkv_segments.py \
-    --rtsp "rtsp://user:password@<CAMERA_IP>:554/stream1" \
-    --tcp
+CAM1_URL="rtsp://username:password@40.10.18.28:554/avstream/channel=1/stream=0.sdp"
+CAM2_URL="rtsp://username:password@40.10.18.29:554/avstream/channel=1/stream=0.sdp"
 ```
 
-Press **Ctrl+C** to stop.
+Replace `username` and `password` with the actual camera credentials.
 
 ---
 
-## Common options
+## 5. Run both recorders simultaneously
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--rtsp URL` | *(required)* | Full RTSP URL including credentials |
-| `--out DIR` | `data_recordings/` | Override the output directory |
-| `--segment N` | `600` | Segment length in seconds |
-| `--tcp` | off | Force RTSP over TCP (recommended) |
-| `--max-duration N` | `14400` | Stop after N seconds; `0` = no limit |
-| `--log FILE` | `ffmpeg_recorder.log` | Log file path |
+```bash
+bash run_recorder.sh
+```
 
-### Examples
+This launches **two recorders in parallel** — one per camera. Recordings are saved to:
 
-Record in 30-minute segments with no time limit:
+```
+data_recordings/
+├── ANPR Cam 1/
+│   ├── anpr_2025-06-01_08-00-00.mkv
+│   └── anpr_2025-06-01_08-10-00.mkv
+└── ANPR Cam 2/
+    ├── anpr_2025-06-01_08-00-00.mkv
+    └── anpr_2025-06-01_08-10-00.mkv
+```
+
+Press **Ctrl+C** to stop both recorders cleanly.
+
+---
+
+## 6. Run a single camera manually (optional)
+
 ```bash
 python3 rtsp_to_mkv_segments.py \
-    --rtsp "rtsp://admin:secret@192.168.1.10:554/stream1" \
-    --segment 1800 \
-    --max-duration 0 \
+    --rtsp "rtsp://username:password@40.10.18.28:554/avstream/channel=1/stream=0.sdp" \
+    --out "./data_recordings/ANPR Cam 1" \
+    --log "./anpr_cam1.log" \
     --tcp
 ```
 
-Strip audio, save to a custom directory:
-```bash
-python3 rtsp_to_mkv_segments.py \
-    --rtsp "rtsp://admin:secret@192.168.1.10:554/stream1" \
-    --out /mnt/nas/recordings \
-    --extra-ffmpeg-args "-an" \
-    --tcp
-```
+---
+
+## Common options (shared settings in run_recorder.sh)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SEGMENT` | `600` | Segment length in seconds |
+| `TCP` | *(unset)* | Uncomment `TCP="--tcp"` to force TCP transport |
+| `RESTART_DELAY` | `5` | Seconds to wait before restarting after a crash |
+| `MAX_RESTARTS` | `0` | Max restarts per recorder; 0 = retry forever |
+| `MAX_DURATION` | `0` | Max recording time in seconds; 0 = no limit |
+| `EXTRA_ARGS` | *(unset)* | Extra ffmpeg args, e.g. `"-an"` to strip audio |
 
 ---
 
 ## Run in the background (nohup)
 
 ```bash
-nohup python3 rtsp_to_mkv_segments.py \
-    --rtsp "rtsp://admin:secret@192.168.1.10:554/stream1" \
-    --tcp \
-    --max-duration 0 \
-    > /dev/null 2>&1 &
-
-echo "PID: $!"
+nohup bash run_recorder.sh > /dev/null 2>&1 &
+echo "Launcher PID: $!"
 ```
 
-Stop it:
+Stop both recorders:
 ```bash
 kill <PID>
 ```
@@ -111,10 +119,18 @@ kill <PID>
 ## Verify recordings
 
 ```bash
-ls -lhtr data_recordings/*.mkv
+ls -lhtr "data_recordings/ANPR Cam 1/"*.mkv
+ls -lhtr "data_recordings/ANPR Cam 2/"*.mkv
 ```
 
 Play a segment:
 ```bash
-ffplay data_recordings/anpr_<timestamp>.mkv
+ffplay "data_recordings/ANPR Cam 1/anpr_<timestamp>.mkv"
+```
+
+## Check logs
+
+```bash
+tail -f anpr_cam1.log
+tail -f anpr_cam2.log
 ```

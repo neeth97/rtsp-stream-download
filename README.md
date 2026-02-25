@@ -1,32 +1,52 @@
-# RTSP → Segmented MKV Recorder
+# RTSP → Segmented MKV Recorder (Dual Camera)
 
-Records an RTSP camera stream to fixed-length MKV files using **ffmpeg**.
-Automatically restarts on network drops, camera reboots, or other ffmpeg
-failures.  Stops cleanly on Ctrl+C, `systemctl stop`, or after a configurable
-maximum recording duration.
+Records two RTSP camera streams simultaneously to fixed-length MKV files using
+**ffmpeg**.  Each camera writes to its own output folder.  Automatically
+restarts on network drops, camera reboots, or other ffmpeg failures.  Stops
+cleanly on Ctrl+C, `systemctl stop`, or after a configurable maximum recording
+duration.
 
 ---
 
 ## How it works
 
 ```
-Camera (RTSP) ──► ffmpeg ──► anpr_2025-06-01_08-00-00.mkv
-                         └──► anpr_2025-06-01_08-10-00.mkv
-                         └──► anpr_2025-06-01_08-20-00.mkv  …
+ANPR Cam 1 (RTSP) ──► ffmpeg ──► data_recordings/ANPR Cam 1/anpr_2025-06-01_08-00-00.mkv
+                              └──► data_recordings/ANPR Cam 1/anpr_2025-06-01_08-10-00.mkv …
+
+ANPR Cam 2 (RTSP) ──► ffmpeg ──► data_recordings/ANPR Cam 2/anpr_2025-06-01_08-00-00.mkv
+                              └──► data_recordings/ANPR Cam 2/anpr_2025-06-01_08-10-00.mkv …
 ```
 
-1. **ffmpeg connects** to the RTSP URL and copies the compressed H.264/H.265
-   bitstream directly into MKV containers — no re-encoding, zero quality loss,
-   minimal CPU.
-2. Every `--segment` seconds (default 600 = 10 min) ffmpeg closes the current
+1. **`run_recorder.sh`** launches two independent Python recorder processes in
+   parallel — one for each camera.
+2. Each recorder spawns its own **ffmpeg** process, which copies the compressed
+   H.264/H.265 bitstream directly into MKV containers — no re-encoding, zero
+   quality loss, minimal CPU.
+3. Every `SEGMENT` seconds (default 600 = 10 min) ffmpeg closes the current
    file and opens a new one, embedding the start timestamp in the filename.
-3. If ffmpeg exits unexpectedly (network glitch, camera offline, etc.) the
-   Python wrapper restarts it after `--restart-delay` seconds.
-4. The script stops when:
-   - You press **Ctrl+C** or send `SIGTERM`, OR
-   - The total elapsed time exceeds `--max-duration` seconds (default 14 400 s
-     = 4 hours), OR
-   - ffmpeg has been restarted more than `--max-restarts` times (optional).
+4. If ffmpeg exits unexpectedly (network glitch, camera offline, etc.) the
+   Python wrapper restarts it after `RESTART_DELAY` seconds.
+5. Press **Ctrl+C** (or send SIGTERM to the launcher) to stop both recorders
+   cleanly at the same time.
+
+---
+
+## Output directory layout
+
+```
+data_recordings/
+├── ANPR Cam 1/
+│   ├── anpr_2025-06-01_08-00-00.mkv
+│   ├── anpr_2025-06-01_08-10-00.mkv
+│   └── …
+└── ANPR Cam 2/
+    ├── anpr_2025-06-01_08-00-00.mkv
+    ├── anpr_2025-06-01_08-10-00.mkv
+    └── …
+```
+
+Directories are created automatically on first run.
 
 ---
 
@@ -34,7 +54,9 @@ Camera (RTSP) ──► ffmpeg ──► anpr_2025-06-01_08-00-00.mkv
 
 | File | Purpose |
 |------|---------|
-| `rtsp_to_mkv_segments.py` | The recorder script — the only file you need to run |
+| `run_recorder.sh` | Configure camera URLs and shared settings, then launch both recorders |
+| `rtsp_to_mkv_segments.py` | Single-stream recorder — called twice by the launcher |
+| `SETUP.md` | Quick-start guide |
 | `README.md` | This documentation |
 
 ---
@@ -53,8 +75,6 @@ Camera (RTSP) ──► ffmpeg ──► anpr_2025-06-01_08-00-00.mkv
 
 ### 1 — Update the package index
 
-Always run this first to avoid installing outdated package versions.
-
 ```bash
 sudo apt-get update
 ```
@@ -63,251 +83,166 @@ sudo apt-get update
 
 ```bash
 sudo apt-get install -y ffmpeg
-```
-
-Verify the installation:
-
-```bash
 ffmpeg -version
 ```
 
-You should see output beginning with `ffmpeg version 4.x.x …` or `5.x.x`.
-If the command is not found, ensure `/usr/bin` is on your `PATH`.
-
 ### 3 — Install Python 3.9+
 
-Ubuntu 20.04 ships Python 3.8; Ubuntu 22.04 ships Python 3.10.
-Check what you have:
-
 ```bash
-python3 --version
+python3 --version   # must be 3.9 or later
 ```
 
-If you are on Ubuntu 20.04 and need 3.9+:
+Ubuntu 20.04 ships Python 3.8; install 3.9 if needed:
 
 ```bash
 sudo apt-get install -y python3.9 python3.9-venv
 ```
 
-> **Note:** The script uses only the Python standard library — no `pip install`
-> step is needed.
+> No `pip install` step is required — the script uses only the standard library.
 
-### 4 — Copy the script to the machine
-
-If you are on a remote Ubuntu server, copy the file with `scp`:
-
-```bash
-scp rtsp_to_mkv_segments.py ubuntu@<SERVER_IP>:/home/ubuntu/
-```
-
-Or clone your repository:
+### 4 — Copy the scripts to the machine
 
 ```bash
 git clone <your-repo-url>
-cd <repo-directory>
+cd rtsp-stream-download
 ```
 
-### 5 — Output directory
-
-The script automatically creates a `data_recordings/` folder **next to the
-script file** the first time it runs — no manual setup required.
-
-If you want to pre-create it or adjust permissions explicitly:
+Or with scp:
 
 ```bash
-mkdir -p data_recordings
+scp rtsp_to_mkv_segments.py run_recorder.sh ubuntu@<SERVER_IP>:/home/ubuntu/
 ```
 
-> Make sure the filesystem has enough free space.  A typical 1080p H.264 stream
-> uses roughly **0.5 – 2 GB per hour** depending on bitrate and scene activity.
-> Check free space with `df -h data_recordings`.
+### 5 — Configure camera URLs
 
-### 6 — Run the recorder (foreground / test)
-
-Use this for an initial test.  Press **Ctrl+C** to stop.
+Edit `run_recorder.sh` and replace the placeholder credentials:
 
 ```bash
-python3 rtsp_to_mkv_segments.py \
-    --rtsp "rtsp://admin:password@192.168.1.10:554/stream1" \
-    --segment 600 \
-    --tcp
+CAM1_URL="rtsp://username:password@40.10.18.28:554/avstream/channel=1/stream=0.sdp"
+CAM2_URL="rtsp://username:password@40.10.18.29:554/avstream/channel=1/stream=0.sdp"
+```
+
+### 6 — Run the recorders (foreground / test)
+
+```bash
+bash run_recorder.sh
 ```
 
 You should see output similar to:
 
 ```
-[recorder] ──────────────────────────────────────────────────
-[recorder] Output directory  : /home/ubuntu/data_recordings
-[recorder] Log file          : /home/ubuntu/ffmpeg_recorder.log
-[recorder] Segment length    : 600 s  (0:10:00)
-[recorder] Max duration      : 14400 s  (stops around 2025-06-01 12:00:00)
-[recorder] Max restarts      : unlimited
-[recorder] Restart delay     : 5 s
-[recorder] FFmpeg command    : ffmpeg -hide_banner -loglevel info …
-[recorder] ──────────────────────────────────────────────────
+[launcher] ─────────────────────────────────────────────────────────
+[launcher] ANPR Cam 1 → ./data_recordings/ANPR Cam 1
+[launcher] ANPR Cam 2 → ./data_recordings/ANPR Cam 2
+[launcher] ─────────────────────────────────────────────────────────
+[launcher] Starting both recorders. Press Ctrl+C to stop.
+
+[launcher] ANPR Cam 1 PID : 12345  (log: ./anpr_cam1.log)
+[launcher] ANPR Cam 2 PID : 12346  (log: ./anpr_cam2.log)
 [recorder] Recording started. Press Ctrl+C to stop.
-[recorder] Launching ffmpeg (launch #0) …
+[recorder] Recording started. Press Ctrl+C to stop.
 ```
 
-After 10 minutes the first MKV segment appears in `data_recordings/`.
+Press **Ctrl+C** to stop both cameras at the same time.
 
 ---
 
-## All command-line arguments
+## Shared settings (run_recorder.sh)
 
-| Argument | Default | Description |
+| Variable | Default | Description |
 |----------|---------|-------------|
-| `--rtsp URL` | *(required)* | Full RTSP URL, e.g. `rtsp://user:pass@ip:554/stream` |
-| `--out DIR` | `<script-dir>/data_recordings` | Output directory for MKV files |
-| `--segment N` | `600` | Segment length in seconds (600 = 10 min) |
-| `--tcp` | off | Force RTSP over TCP (recommended for NAT / VPN) |
-| `--restart-delay N` | `5` | Seconds to wait before restarting ffmpeg after a crash |
-| `--max-restarts N` | `0` | Stop after N restarts; 0 = retry forever |
-| `--max-duration N` | `14400` | Stop after N total seconds (0 = no limit) |
-| `--log FILE` | `<script-dir>/ffmpeg_recorder.log` | Log file path (appended, parent dir created automatically) |
-| `--extra-ffmpeg-args ARGS` | *(empty)* | Extra ffmpeg output options, e.g. `"-an"` to strip audio |
-
-### Common `--max-duration` values
-
-| Duration | Seconds |
-|----------|---------|
-| 1 hour | 3600 |
-| 4 hours (default) | 14400 |
-| 8 hours | 28800 |
-| 24 hours | 86400 |
-| No limit | 0 |
+| `SEGMENT` | `600` | Segment length in seconds (600 = 10 min) |
+| `TCP` | *(unset)* | Uncomment `TCP="--tcp"` to force TCP transport |
+| `RESTART_DELAY` | `5` | Seconds to wait before restarting ffmpeg after a crash |
+| `MAX_RESTARTS` | `0` | Stop after N restarts per camera; 0 = retry forever |
+| `MAX_DURATION` | `0` | Max total recording time in seconds; 0 = no limit |
+| `EXTRA_ARGS` | *(unset)* | Extra ffmpeg output options, e.g. `"-an"` to strip audio |
 
 ---
 
 ## Running in the background (nohup)
 
-To keep the recorder running after you log out of an SSH session:
-
 ```bash
-nohup python3 /home/ubuntu/rtsp_to_mkv_segments.py \
-    --rtsp "rtsp://admin:password@192.168.1.10:554/stream1" \
-    --segment 600 \
-    --tcp \
-    > /dev/null 2>&1 &
-
-echo "PID: $!"
+nohup bash run_recorder.sh > /dev/null 2>&1 &
+echo "Launcher PID: $!"
 ```
 
-Recordings and the log are written to `/home/ubuntu/data_recordings/` and
-`/home/ubuntu/ffmpeg_recorder.log` automatically (next to the script).
-Pass `--out` and `--log` to override these paths.
-
-Stop it later with:
+Both recorders run as children of the launcher process.  Stop everything with:
 
 ```bash
-kill <PID>
+kill <LAUNCHER_PID>
 ```
 
 ---
 
 ## Running as a systemd service (recommended for production)
 
-Running as a systemd service means the recorder:
-- Starts automatically on boot.
-- Restarts automatically if the Python process itself crashes.
-- Integrates with `journalctl` for log viewing.
-- Can be stopped cleanly with `systemctl stop`.
-
-### Create the service file
-
-```bash
-sudo nano /etc/systemd/system/rtsp-recorder.service
-```
-
-Paste the following, replacing the values in `< >`:
+Create `/etc/systemd/system/rtsp-recorder.service`:
 
 ```ini
 [Unit]
-Description=RTSP to MKV Segmented Recorder
+Description=RTSP to MKV Dual-Camera Recorder
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=<YOUR_USER>
-WorkingDirectory=/home/<YOUR_USER>
+WorkingDirectory=/home/<YOUR_USER>/rtsp-stream-download
 
-ExecStart=/usr/bin/python3 /home/<YOUR_USER>/rtsp_to_mkv_segments.py \
-    --rtsp "rtsp://admin:password@192.168.1.10:554/stream1" \
-    --segment 600 \
-    --tcp \
-    --max-duration 0
+ExecStart=/bin/bash /home/<YOUR_USER>/rtsp-stream-download/run_recorder.sh
 
-# Restart the Python wrapper if it exits unexpectedly.
-# (The wrapper already handles ffmpeg restarts internally.)
+# Restart the launcher if it exits unexpectedly.
 Restart=on-failure
 RestartSec=10
 
-# Give ffmpeg up to 10 seconds to close the current segment on shutdown.
-TimeoutStopSec=10
+# Give ffmpeg time to close the current segments on shutdown.
+TimeoutStopSec=15
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-> Set `--max-duration 0` when using systemd so the service runs indefinitely
-> and systemd handles the lifecycle.  Use `--max-duration 14400` for a 4-hour
-> auto-stop if you prefer the script to manage its own lifetime.
-
-### Enable and start the service
+Enable and start:
 
 ```bash
-# Reload systemd so it sees the new file
 sudo systemctl daemon-reload
-
-# Start the service now
 sudo systemctl start rtsp-recorder
-
-# Enable it to start on every boot
 sudo systemctl enable rtsp-recorder
-
-# Check status
 sudo systemctl status rtsp-recorder
 ```
 
-### View logs
+View logs:
 
 ```bash
-# Live tail of the recorder log file
-tail -f /home/<YOUR_USER>/ffmpeg_recorder.log
-
-# Or via journalctl (systemd's journal)
+tail -f /home/<YOUR_USER>/rtsp-stream-download/anpr_cam1.log
+tail -f /home/<YOUR_USER>/rtsp-stream-download/anpr_cam2.log
+# or via journalctl:
 journalctl -u rtsp-recorder -f
-```
-
-### Stop / restart the service
-
-```bash
-sudo systemctl stop rtsp-recorder
-sudo systemctl restart rtsp-recorder
 ```
 
 ---
 
 ## Verifying recordings
 
-List segments sorted by time (newest last):
+List segments (newest last):
 
 ```bash
-ls -lhtr data_recordings/*.mkv
+ls -lhtr "data_recordings/ANPR Cam 1/"*.mkv
+ls -lhtr "data_recordings/ANPR Cam 2/"*.mkv
 ```
 
-Play a segment with ffplay (part of the ffmpeg package):
+Play a segment:
 
 ```bash
-ffplay data_recordings/anpr_2025-06-01_08-00-00.mkv
+ffplay "data_recordings/ANPR Cam 1/anpr_2025-06-01_08-00-00.mkv"
 ```
 
-Inspect a segment without playing it:
+Inspect without playing:
 
 ```bash
 ffprobe -v quiet -print_format json -show_format -show_streams \
-    data_recordings/anpr_2025-06-01_08-00-00.mkv
+    "data_recordings/ANPR Cam 1/anpr_2025-06-01_08-00-00.mkv"
 ```
 
 ---
@@ -317,7 +252,7 @@ ffprobe -v quiet -print_format json -show_format -show_streams \
 The recorder does **not** automatically delete old files.  Add a cron job to
 remove segments older than a given number of days.
 
-Example: delete files older than 7 days, run every hour:
+Example: delete files older than 7 days from both folders, run every hour:
 
 ```bash
 crontab -e
@@ -341,51 +276,39 @@ sudo apt-get install -y ffmpeg
 
 ### "Connection timed out" / stream not connecting
 
-1. Confirm the camera is reachable: `ping 192.168.1.10`
-2. Confirm the RTSP port is open: `nc -zv 192.168.1.10 554`
-3. Test the URL directly: `ffplay "rtsp://admin:password@192.168.1.10:554/stream1"`
-4. Try adding `--tcp` — some cameras only accept TCP.
-5. Check that the credentials are correct (some cameras URL-encode special
-   characters: `@` → `%40`, `:` → `%3A`).
+1. Confirm the camera is reachable: `ping 40.10.18.28`
+2. Confirm the RTSP port is open: `nc -zv 40.10.18.28 554`
+3. Test the URL directly: `ffplay "rtsp://username:password@40.10.18.28:554/avstream/channel=1/stream=0.sdp"`
+4. Try enabling TCP in `run_recorder.sh`: uncomment `TCP="--tcp"`
+5. Check that credentials are correct (URL-encode special characters if needed:
+   `@` → `%40`, `:` → `%3A`).
 
 ### ffmpeg exits immediately with code 1
 
-Check the log file for the error:
+Check the per-camera log:
 
 ```bash
-tail -50 ffmpeg_recorder.log
+tail -50 anpr_cam1.log
+tail -50 anpr_cam2.log
 ```
 
-Common causes:
-- Wrong RTSP URL or credentials.
-- Camera is offline or the stream path is incorrect.
-- ffmpeg build does not support the camera's codec (rare with the apt package).
+Common causes: wrong RTSP URL or credentials, camera offline, or incorrect stream path.
 
 ### Segments are corrupt or unplayable
 
-- Ensure `--tcp` is set — UDP packet loss on a bad network can corrupt the
-  elementary stream.
-- Increase `--restart-delay` to give the camera time to fully reboot before
-  reconnecting.
-- Check that the disk is not full: `df -h data_recordings`.
+- Enable TCP: uncomment `TCP="--tcp"` in `run_recorder.sh`.
+- Increase `RESTART_DELAY` to give the camera more time to reboot.
+- Check disk space: `df -h data_recordings`.
 
 ### High CPU usage
 
-The default `-c copy` (stream copy) uses almost no CPU.  If CPU is high:
-- You may have accidentally enabled transcoding via `--extra-ffmpeg-args`.
-- Another process on the system is decoding the MKV files simultaneously.
+The default `-c copy` (stream copy) uses almost no CPU.  High CPU typically
+means transcoding was accidentally enabled via `EXTRA_ARGS`.
 
 ### Segments named with wrong timestamp
 
-Verify that the Ubuntu machine's clock is correct:
-
 ```bash
 timedatectl status
-```
-
-Enable automatic time synchronisation:
-
-```bash
 sudo timedatectl set-ntp true
 ```
 
@@ -394,7 +317,10 @@ sudo timedatectl set-ntp true
 ## Security notes
 
 - **RTSP credentials appear in the process list** (`ps aux`) and in the log
-  file.  Restrict log file permissions: `chmod 600 ffmpeg_recorder.log`.
+  files.  Restrict log file permissions:
+  ```bash
+  chmod 600 anpr_cam1.log anpr_cam2.log
+  ```
+- Run the recorder as a dedicated low-privilege user rather than root.
 - If the RTSP URL contains special characters in the password, URL-encode them
   or wrap the argument in single quotes to prevent shell interpretation.
-- Run the recorder as a dedicated low-privilege user rather than root.
