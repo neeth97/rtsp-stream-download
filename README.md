@@ -7,7 +7,13 @@ cleanly on Ctrl+C, `systemctl stop`, or after a configurable maximum recording
 duration.
 
 ---
+Commands:
 
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip awscliv2.zip
+sudo ./aws/install
+
+aws --version
 ## How it works
 
 ```
